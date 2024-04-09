@@ -1,0 +1,477 @@
+---
+title: "Reduced form 3.0"
+output: html_notebook
+---
+
+#Preperations
+
+Delete everything
+```{r}
+rm(list = ls())
+options(scipen = 0)
+```
+
+Load the packBirthYears
+```{r}
+library(haven)
+library(dplyr)
+library(tidyr)
+library(foreign)
+library(ivreg)
+library(quantreg)
+library(ggplot2)
+library(quantregForest)
+```
+
+#Data preparation HUNT2,HUNT3,HUNT4
+Load the dataset
+```{r}
+df_regression <- read_csv("2nd analysis/df_regression2.0.cvs")
+```
+Take away the NA
+```{r}
+df_regression_no_na <- na.omit(df_regression[, c("BMI", "yengogrs", "Smoking", "Urbanity", "BirthYear", "Marital", "Bu_Edu", "income_2020","D_HUNT2", "D_HUNT3", "lockegrs", "Sex", "prob_income_positive")])
+
+df_regression_no_na <- df_regression_no_na[df_regression_no_na$income_2020 >= 0, ]
+```
+Make a group for Non Zero Income
+Exclude those with an income=0
+```{r}
+df_regression_no_zincome <- df_regression_no_na[df_regression_no_na$income_2020 != 0, ]
+```
+Take away missing values from the variables
+```{r}
+df_regression_no_zincome <- na.omit(df_regression_no_zincome[, c("BMI", "yengogrs", "Smoking", "Urbanity", "BirthYear", "Marital", "Bu_Edu", "income_2020","D_HUNT2", "D_HUNT3", "lockegrs", "Sex", "prob_income_positive")])
+```
+Create log variables for income in both
+```{r}
+df_regression_no_na$log_income <- log1p(df_regression_no_na$income_2020)
+df_regression_no_zincome$log_income <- log(df_regression_no_zincome$income_2020)
+df_regression_no_zincome <- df_regression_no_zincome[!is.nan(df_regression_no_zincome$log_income), ]
+```
+Generate one for males and females
+```{r}
+df_regression_male <- subset(df_regression_no_na, Sex == "Male")
+df_regression_female <- subset(df_regression_no_na, Sex == "Female")
+df_regression_male_NZI <- subset(df_regression_no_zincome, Sex == "Male")
+df_regression_female_NZI <- subset(df_regression_no_zincome, Sex == "Female")
+```
+
+
+#Code preparation
+```{r}
+Reduced_form <- function(G, Y, X, Data, Name) {
+  # Fit the reduced form linear regression model
+  Reduced <- lm(as.formula(paste(Y, "~", paste(c(G, X), collapse = " + "))), data = Data)
+  
+  # Summarize the reduced form linear regression model
+  summary(Reduced)
+  
+  # Obtain tidy results from the reduced form linear regression model
+  tidy_results <- tidy(Reduced)
+  print(tidy_results)
+  
+  # Save tidy results to a CSV file
+  file_path_table <- paste("Outcome tables/reduced_results", Name, ".csv", sep = "")
+  write.csv(tidy_results, file = file_path_table, row.names = FALSE)
+  
+  # Define a function to compute coefficients and confidence intervals for quantile regression
+  get_grs_coef <- function(data, tau) {
+    model <- rq(as.formula(paste(Y, "~", paste(c(G, X), collapse = " + "))), tau = tau, data = data)
+    
+    coef_value <- coef(model)[G]
+    se <- summary(model)$coef[G, 'Std. Error']
+    
+    # Calculate 95% confidence interval
+    ci_lower <- coef_value - 1.96 * se
+    ci_upper <- coef_value + 1.96 * se
+    
+    coef_data <- data.frame(
+      quantile = tau,
+      coef_value = coef_value,
+      ci_lower = ci_lower,
+      ci_upper = ci_upper
+    )
+    
+    return(coef_data)
+  }
+  
+  # Quantiles of interest
+  tau <- seq(0.1, 0.9, by = 0.1)
+  
+  # Store coefficients and confidence intervals for quantile regression
+  grs_coef_data_quantile <- do.call(rbind, lapply(tau, function(tau_i) get_grs_coef(Data, tau_i)))
+  
+  # Fit the normal reduced form linear regression model
+  Reduc_nor <- lm(as.formula(paste(Y, "~", paste(c(G, X), collapse = " + "))), data = Data)
+  
+  # Predict residuals from the normal BMI regression
+  grs_normal_regression <- predict(Reduc_nor, newdata = Data, type = "response")
+  
+  # Combine residuals from quantile regression and normal regression
+  df_regression_no_na <- cbind(Data, grs_normal_regression)
+  
+  # Plot using ggplot2
+  plot <- ggplot(grs_coef_data_quantile, aes(x = quantile, y = coef_value)) +
+    geom_line() +
+    geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper), alpha = 0.2) +
+    geom_point() +
+    geom_hline(yintercept = coef(Reduc_nor)[G], linetype = "dashed", color = "red") +
+    labs(title = paste("Coefficient plot (", Name, ") QuantReg", sep = ""),  x = "Quantiles", y = "Coefficient") +
+    theme_minimal()
+  
+  # Save the plot
+  ggsave(paste("Graphs/Coefficient_plot_Reduced_Form_", Name, ".png"), plot = plot)
+  
+  # Return the plot
+  return(plot)
+}
+```
+
+********************************************************************************
+Example
+********************************************************************************
+Reduced_form(G = "lockegrs",
+             Y = "log_income",
+             X = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"),
+             Data = df_regression_no_na,
+             Name = "Test")
+********************************************************************************
+
+#Male and female togehter Yengo
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "log_income",
+             X = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_no_na,
+             Name = "log_Yengo")
+```
+
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "log_income",
+             X = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_no_zincome,
+             Name = "log_Yengo_NZI")
+```
+
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "prob_income_positive",
+             X = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_no_na,
+             Name = "Prob_Yengo")
+```
+
+#Male and female togehter Locke
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "log_income",
+             X = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_no_na,
+             Name = "log_Locke")
+```
+
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "log_income",
+             X = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_no_zincome,
+             Name = "log_Locke_NZI")
+```
+
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "prob_income_positive",
+             X = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_no_na,
+             Name = "Prob_Locke")
+```
+#Male Yengo
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_male,
+             Name = "log_Yengo_male")
+```
+
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_male_NZI,
+             Name = "log_Yengo_NZI_male")
+```
+
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "prob_income_positive",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_male,
+             Name = "Prob_Yengo_male")
+```
+
+
+#Male Locke
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_male,
+             Name = "log_Locke_male")
+```
+
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_male_NZI,
+             Name = "log_Locke_NZI_male")
+```
+
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "prob_income_positive",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_male,
+             Name = "Prob_Locke_male")
+```
+
+#Female Yengo
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_female,
+             Name = "log_Yengo_female")
+```
+
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_female_NZI,
+             Name = "log_Yengo_NZI_female")
+```
+
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "prob_income_positive",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_female,
+             Name = "Prob_Yengo_female")
+```
+
+#Female Locke
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_female,
+             Name = "log_Locke_female")
+```
+
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_female_NZI,
+             Name = "log_Locke_NZI_female")
+```
+
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "prob_income_positive",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2","HUNT3"),
+             Data = df_regression_female,
+             Name = "Prob_Locke_female")
+```
+
+
+#Data Christina
+Load the dataset
+```{r}
+df_Christina <- read_dta("2nd analysis/df_Christina.dta")
+```
+Take away the NA
+```{r}
+df_Christina_no_na <- na.omit(df_Christina[, c("BMI", "yengogrs", "Smoking", "Urbanity", "BirthYear", "Marital", "Bu_Edu", "Income_Eur","D_HUNT2", "D_HUNT3", "lockegrs", "Sex", "prob_income_positive")])
+
+df_Christina_no_na <- df_Christina_no_na[df_Christina_no_na$Income_Eur >= 0, ]
+```
+Make a group for Non Zero Income
+Exclude those with an income=0
+```{r}
+df_Christina_no_zincome <- df_Christina_no_na[df_Christina_no_na$Income_Eur != 0, ]
+```
+Take away missing values from the variables
+```{r}
+df_Christina_no_zincome <- na.omit(df_Christina_no_zincome[, c("BMI", "yengogrs", "Smoking", "Urbanity", "BirthYear", "Marital", "Bu_Edu", "Income_Eur","D_HUNT2", "D_HUNT3", "lockegrs", "Sex", "prob_income_positive")])
+```
+Create log variables for income in both
+```{r}
+df_Christina_no_na$log_income <- log1p(df_Christina_no_na$Income_Eur)
+df_Christina_no_zincome$log_income <- log(df_Christina_no_zincome$Income_Eur)
+df_Christina_no_zincome <- df_Christina_no_zincome[!is.nan(df_Christina_no_zincome$Income_Eur), ]
+```
+Generate one for males and females
+```{r}
+df_Christina_male <- subset(df_Christina_no_na, Sex == 2)
+df_Christina_female <- subset(df_Christina_no_na, Sex == 1)
+df_Christina_male_NZI <- subset(df_Christina_no_zincome, Sex == 2)
+df_Christina_female_NZI <- subset(df_Christina_no_zincome, Sex == 1)
+```
+
+#Analysis with Christina Data
+
+
+#Male and female togehter Yengo
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "log_income",
+             X = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_no_na,
+             Name = "log_Yengo_Chris")
+```
+
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "log_income",
+             X = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_no_zincome,
+             Name = "log_Yengo_NZI_Chris")
+```
+
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "prob_income_positive",
+             X = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_no_na,
+             Name = "Prob_Yengo_Chris")
+```
+
+#Male and female togehter Locke
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "log_income",
+             X = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_no_na,
+             Name = "log_Locke_Chris")
+```
+
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "log_income",
+             X = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_no_zincome,
+             Name = "log_Locke_NZI_Chris")
+```
+
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "prob_income_positive",
+             X = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_no_na,
+             Name = "Prob_Locke_Chris")
+```
+#Male Yengo
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_male,
+             Name = "log_Yengo_male_Chris")
+```
+
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_male_NZI,
+             Name = "log_Yengo_NZI_male_Chris")
+```
+
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "prob_income_positive",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_male,
+             Name = "Prob_Yengo_male_Chris")
+```
+
+
+#Male Locke
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_male,
+             Name = "log_Locke_male_Chris")
+```
+
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_male_NZI,
+             Name = "log_Locke_NZI_male_Chris")
+```
+
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "prob_income_positive",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_male,
+             Name = "Prob_Locke_male_Chris")
+```
+
+#Female Yengo
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_female,
+             Name = "log_Yengo_female_Chris")
+```
+
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_female_NZI,
+             Name = "log_Yengo_NZI_female_Chris")
+```
+
+```{r}
+Reduced_form(G = "yengogrs",
+             Y = "prob_income_positive",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_female,
+             Name = "Prob_Yengo_female_Chris")
+```
+
+#Female Locke
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_female,
+             Name = "log_Locke_female_Chris")
+```
+
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "log_income",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_female_NZI,
+             Name = "log_Locke_NZI_female_Chris")
+```
+
+```{r}
+Reduced_form(G = "lockegrs",
+             Y = "prob_income_positive",
+             X = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"),
+             Data = df_Christina_female,
+             Name = "Prob_Locke_female_Chris")
+```
