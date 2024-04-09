@@ -1,0 +1,439 @@
+---
+title: "2SRI Analysis"
+output: html_notebook
+---
+
+#General preparations
+Delete everything
+```{r}
+rm(list = ls())
+```
+Load the packages
+```{r}
+library(haven)
+library(dplyr)
+library(tidyr)
+library(foreign)
+library(psych)
+library(parallel)
+library(ivreg)
+library(quantreg)
+library(ggplot2)
+library(boot)
+library(snow)
+library(broom)
+```
+
+#Data preparation
+Load the dataset
+```{r}
+df_regression <- read_csv("2nd analysis/df_regression2.0.cvs")
+```
+Make the categorical numeric
+```{r}
+df_regression$Sex <- ifelse(df_regression$Sex == "Male", 1, 2)
+df_regression$Smoking <- ifelse(df_regression$Smoking == "Never smoked", 1,
+                                       ifelse(df_regression$Smoking == "Ex daily smoker", 2,
+                                              ifelse(df_regression$Smoking == "Current daily smoker", 3,
+                                                     ifelse(df_regression$Smoking == "Current occasional smoker", 4, 5))))
+df_regression$Urbanity <- ifelse(df_regression$Urbanity == "Urban", 1, 2)
+df_regression$Marital <- ifelse(df_regression$Marital == "Unmarried", 1,
+                                       ifelse(df_regression$Marital == "Married", 2,
+                                              ifelse(df_regression$Marital == "Widow, widower", 3,
+                                                     ifelse(df_regression$Marital == "Divorced", 4, 5))))
+df_regression$Bu_Edu <- ifelse(df_regression$Bu_Edu == "Primary School", 1,
+                                       ifelse(df_regression$Bu_Edu == "Secondary school", 2,
+                                              ifelse(df_regression$Bu_Edu == "Higher education short", 3, 4)))
+df_regression$D_HUNT2 <- as.numeric(df_regression$D_HUNT2)
+df_regression$D_HUNT3 <- as.numeric(df_regression$D_HUNT3)
+```
+
+Take away the NA
+```{r}
+df_regression_no_na <- na.omit(df_regression[, c("BMI", "yengogrs", "Smoking", "Urbanity", "Age", "Marital", "Bu_Edu", "income_2020","D_HUNT2", "D_HUNT3", "lockegrs", "Sex", "prob_income_positive")])
+
+df_regression_no_na <- df_regression_no_na[df_regression_no_na$income_2020 >= 0, ]
+```
+Make a group for Non Zero Income
+Exclude those with an income=0
+```{r}
+df_regression_no_zincome <- df_regression_no_na[df_regression_no_na$income_2020 != 0, ]
+```
+Take away missing values from the variables
+```{r}
+df_regression_no_zincome <- na.omit(df_regression_no_zincome[, c("BMI", "yengogrs", "Smoking", "Urbanity", "Age", "Marital", "Bu_Edu", "income_2020","D_HUNT2", "D_HUNT3", "lockegrs", "Sex", "prob_income_positive")])
+```
+Create log variables for income in both
+```{r}
+df_regression_no_na$log_income <- log1p(df_regression_no_na$income_2020)
+df_regression_no_zincome$log_income <- log(df_regression_no_zincome$income_2020)
+df_regression_no_zincome <- df_regression_no_zincome[!is.nan(df_regression_no_zincome$log_income), ]
+```
+Generate one for males and females
+```{r}
+df_regression_male <- subset(df_regression_no_na, Sex == 1)
+df_regression_female <- subset(df_regression_no_na, Sex == 2)
+df_regression_male_NZI <- subset(df_regression_no_zincome, Sex == 1)
+df_regression_female_NZI <- subset(df_regression_no_zincome, Sex == 2)
+```
+
+#Code preparation
+```{r}
+SRIQuantReg <- function(G, Y, X, C, Data, Name) {
+   # Calculate deciles of the income variable
+  deciles <- quantile(Data[[Y]], probs = seq(0, 1, by = 0.1), na.rm = TRUE)
+  
+  # Create an empty list to store dataframes for each decile
+  decile_dfs <- list()
+  
+  # Loop through each decile and create a dataframe for that decile
+  for (i in 1:(length(deciles)-1)) {
+    lower_bound <- deciles[i]
+    upper_bound <- deciles[i+1]
+    
+    # Subset the dataframe for each decile
+    decile_df <- subset(Data, Data[[Y]] >= lower_bound & Data[[Y]] <= upper_bound)
+    
+    # Store the dataframe in the list with a meaningful name
+    decile_dfs[[paste0("decile_", i)]] <- decile_df
+  }
+  
+  # Create an empty dataframe
+  quantile_results <- data.frame(Quantile = character(), BMI_Coefficient = numeric(), BMI_Std_Error = numeric(), BMI_t_statistic = numeric(), BMI_p_value = numeric(), stringsAsFactors = FALSE)
+  
+  formula_string_first <- paste(X, "~",paste(c(G, C), collapse = " + "))
+  formula_string_full <- paste(Y, "~", X, "+", paste(C, collapse = " + "), "|", G, "+",paste(C, collapse = " + "))
+  
+  # Run the ivreg regression for each quantile and extract the desired information
+  for (i in 1:length(decile_dfs)) {
+    # Extract the dataframe for the current quantile
+    current_quantile <- decile_dfs[[i]]
+    
+    # Run the ivreg regression
+    Quantile <- tsri(formula = formula_string_full, data = current_quantile, link = "identity")
+    
+    # Extract regression summary
+    summary_model <- summary(Quantile)
+
+    # Extract coefficients
+    coefficients <- summary_model[["smry"]][["coefficients"]]
+
+    # Extract coefficient, SE, t-statistic, and p-value of BMI
+    BMI_stats <- coefficients["BMI", ]
+    
+    # Extract information for BMI
+    bmi_coef <- BMI_stats["Estimate"]
+    bmi_se <- BMI_stats["Std. Error"]
+    bmi_t_stat <- BMI_stats["t value"]
+    bmi_p_value <- BMI_stats["Pr(>|t|)"]
+    
+    # Append the results to the dataframe
+    quantile_results <- rbind(quantile_results, data.frame(Quantile = paste0("Quantile ", i),
+                                                           BMI_Coefficient = bmi_coef,
+                                                           BMI_Std_Error = bmi_se,
+                                                           BMI_t_statistic = bmi_t_stat,
+                                                           BMI_p_value = bmi_p_value,
+                                                           stringsAsFactors = FALSE))
+  }
+  
+  #Take the linear regressions
+  First_stage <- lm(formula = formula_string_first, data = Data)
+  Full <- tsri(formula = formula_string_full, data = Data, link = "identity")
+  
+  # Extract coefficients, standard errors, t-statistics, and p-values for BMI
+  # Extract regression summary
+    summary_model_Full <- summary(Full)
+
+    # Extract coefficients
+    coefficients_Full <- summary_model_Full[["smry"]][["coefficients"]]
+
+    # Extract coefficient, SE, t-statistic, and p-value of BMI
+    Full_stats <- coefficients_Full["BMI", ]
+    
+    # Extract information for BMI
+    coef_full <- Full_stats["Estimate"]
+    se_full <- Full_stats["Std. Error"]
+    tstat_full <- Full_stats["t value"]
+    p_full <- Full_stats["Pr(>|t|)"]
+  
+    summary_stats_first <- summary(First_stage)$coefficients[paste(G), c("Estimate", "Std. Error", "t value", "Pr(>|t|)")]
+  
+  coef_first <- summary_stats_first["Estimate"]
+  se_first <- summary_stats_first["Std. Error"]
+  tstat_first <- summary_stats_first["t value"]
+  p_first <- summary_stats_first["Pr(>|t|)"]
+
+  # Construct the data frame
+  result <- data.frame(
+    Coefficient_First = coef_first,
+    SE_First = se_first,
+    t_statistic_First = tstat_first,
+    p_value_First =  p_first,
+    Coefficient_Second = coef_full,
+    SE_Second = se_full,
+    t_statistic_Second = tstat_full,
+    p_value_Second = p_full
+  )
+ print(result)
+    
+  # Calculate confidence intervals
+  quantile_results$ci_lower <- quantile_results$BMI_Coefficient - (1.96 * quantile_results$BMI_Std_Error)
+  quantile_results$ci_upper <- quantile_results$BMI_Coefficient + (1.96 * quantile_results$BMI_Std_Error)
+  
+  # Convert Quantile to numeric
+  quantile_results <- quantile_results %>%
+    mutate(Quantile = as.numeric(gsub("Quantile ", "", Quantile)) / 10)
+  
+  # Plot with rescaled Quantile and horizontal line at 0
+  plot <- ggplot(quantile_results, aes(x = Quantile, y = BMI_Coefficient)) +
+    geom_point() +
+    geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.1) +
+    geom_hline(yintercept = 0, linetype = "solid", color = "blue", size = 0.5) + 
+    geom_hline(yintercept = coef_full, linetype = "dashed", color = "red") +
+    labs(title = paste("BMI Coefficient plot (", Name, ") across Quantiles", sep = ""),
+         x = "Quantile", y = "BMI Coefficient") +
+    theme_minimal()
+  
+  # Print
+  print(summary(First_stage))
+  print(summary(Full))
+  print(plot)
+  print(quantile_results)
+  
+  # Save
+  # Construct the file path
+  file_path_Nor <- paste("Outcome tables/Normal", Name, ".csv", sep = "")
+
+  # Save results to a CSV file
+  write.csv(result, file = file_path_Nor, row.names = FALSE)
+  
+  # Construct the file path for Quantile
+  file_path_Quant <- paste("Outcome tables/Quantile", Name, ".csv", sep = "")
+  
+  # Save results to a CSV file for Quantile
+  write.csv(quantile_results, file = file_path_Quant, row.names = TRUE)
+  
+  # Save the plot
+  ggsave(paste("Graphs/Coefficient plot (", Name, ") QuantReg.png", sep = ""), plot = plot)
+}
+```
+
+********************************************************************************
+An example of the input
+********************************************************************************
+SRIQuantReg(G = "yengogrs", Y = "log_income", X = "BMI", C = c("Age", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_no_zincome, Name = "SRI_log_Yengo_")
+********************************************************************************
+
+#Analysis
+
+##Yengo
+
+###Total
+```{r}
+SRIQuantReg(G = "yengogrs", Y = "log_income", X = "BMI", C = c("Age", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_no_zincome, Name = "SRI_log_Yengo_NZI")
+```
+
+```{r}
+SRIQuantReg(G = "yengogrs", Y = "prob_income_positive", X = "BMI", C = c("Age", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_no_na, Name = "SRI_Prob_Yengo")
+```
+
+###Male
+```{r}
+SRIQuantReg(G = "yengogrs", Y = "log_income", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_male_NZI, Name = "SRI_log_Yengo_NZI_male")
+```
+
+```{r}
+SRIQuantReg(G = "yengogrs", Y = "prob_income_positive", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_male, Name = "SRI_Prob_Yengo_male")
+```
+
+###Female
+```{r}
+SRIQuantReg(G = "yengogrs", Y = "log_income", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_female_NZI, Name = "SRI_log_Yengo_NZI_female")
+```
+```{r}
+SRIQuantReg(G = "yengogrs", Y = "prob_income_positive", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_female, Name = "SRI_Prob_Yengo_female")
+```
+##Locke
+
+###Total
+```{r}
+SRIQuantReg(G = "lockegrs", Y = "log_income", X = "BMI", C = c("Age", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_no_zincome, Name = "SRI_log_Locke_NZI")
+```
+
+```{r}
+SRIQuantReg(G = "lockegrs", Y = "prob_income_positive", X = "BMI", C = c("Age", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_no_na, Name = "SRI_Prob_Locke")
+```
+
+
+###Male
+```{r}
+SRIQuantReg(G = "lockegrs", Y = "log_income", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_male_NZI, Name = "SRI_log_Locke_NZI_male")
+```
+
+```{r}
+SRIQuantReg(G = "lockegrs", Y = "prob_income_positive", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_male, Name = "SRI_Prob_Locke_male")
+```
+
+###Female
+```{r}
+SRIQuantReg(G = "lockegrs", Y = "log_income", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_female_NZI, Name = "SRI_log_Locke_NZI_female")
+```
+
+```{r}
+SRIQuantReg(G = "lockegrs", Y = "prob_income_positive", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_female, Name = "SRI_Prob_Locke_female")
+```
+
+
+#Data Christina
+Load the dataset
+```{r}
+df_regression <- read_dta("2nd analysis/df_Christina.dta")
+```
+
+```{r}
+# Convert the list to a dataframe (if necessary)
+if (!is.data.frame(df_regression)) {
+  df_regression <- as.data.frame(df_regression)
+}
+
+# Check for missing values (NA) in each column
+any_na <- sapply(df_regression, function(x) any(is.na(x)))
+
+# Check for infinite values in each column
+any_inf <- sapply(df_regression, function(x) any(is.infinite(x)))
+
+# Print the results
+print(any_na)
+print(any_inf)
+
+```
+
+```{r}
+
+df_regression <- as.data.frame(df_regression)  
+
+df_regression <- as.data.frame(lapply(df_regression, as.numeric))
+
+```
+Make the categorical numeric
+```{r}
+df_regression$Smoking <- ifelse(df_regression$Smoking == "Never smoked", 1,
+                                       ifelse(df_regression$Smoking == "Ex daily smoker", 2,
+                                              ifelse(df_regression$Smoking == "Current daily smoker", 3,
+                                                     ifelse(df_regression$Smoking == "Current occasional smoker", 4, 5))))
+df_regression$Urbanity <- ifelse(df_regression$Urbanity == "Urban", 1, 2)
+df_regression$Marital <- ifelse(df_regression$Marital == "Unmarried", 1,
+                                       ifelse(df_regression$Marital == "Married", 2,
+                                              ifelse(df_regression$Marital == "Widow, widower", 3,
+                                                     ifelse(df_regression$Marital == "Divorced", 4, 5))))
+df_regression$Bu_Edu <- as.numeric(df_regression$Bu_Edu)
+df_regression$Sex <- as.numeric(df_regression$Sex)
+df_regression$D_HUNT2 <- as.numeric(df_regression$D_HUNT2)
+df_regression$D_HUNT3 <- as.numeric(df_regression$D_HUNT3)
+```
+Take away the NA
+```{r}
+df_regression_no_na <- na.omit(df_regression[, c("BMI", "yengogrs", "Smoking", "Urbanity", "Age", "Marital", "Bu_Edu", "Income_Eur","D_HUNT2", "D_HUNT3", "lockegrs", "Sex", "prob_income_positive")])
+
+df_regression_no_na <- df_regression_no_na[df_regression_no_na$Income_Eur >= 0, ]
+```
+Make a group for Non Zero Income
+Exclude those with an income=0
+```{r}
+df_regression_no_zincome <- df_regression_no_na[df_regression_no_na$Income_Eur != 0, ]
+```
+Take away missing values from the variables
+```{r}
+df_regression_no_zincome <- na.omit(df_regression_no_zincome[, c("BMI", "yengogrs", "Smoking", "Urbanity", "Age", "Marital", "Bu_Edu", "Income_Eur","D_HUNT2", "D_HUNT3", "lockegrs", "Sex", "prob_income_positive")])
+```
+Create log variables for income in both
+```{r}
+df_regression_no_na$log_income <- log1p(df_regression_no_na$Income_Eur)
+df_regression_no_zincome$log_income <- log(df_regression_no_zincome$Income_Eur)
+df_regression_no_zincome <- df_regression_no_zincome[!is.nan(df_regression_no_zincome$Income_Eur), ]
+```
+Generate one for males and females
+```{r}
+df_regression_male <- subset(df_regression_no_na, Sex == 1)
+df_regression_female <- subset(df_regression_no_na, Sex == 2)
+df_regression_male_NZI <- subset(df_regression_no_zincome, Sex == 1)
+df_regression_female_NZI <- subset(df_regression_no_zincome, Sex == 2)
+```
+
+```{r}
+# Convert the list to a dataframe (if necessary)
+if (!is.data.frame(df_regression_no_zincome)) {
+  df_regression_no_zincome <- as.data.frame(df_regression_no_zincome)
+}
+
+# Check for missing values (NA) in each column
+any_na <- sapply(df_regression_no_zincome, function(x) any(is.na(x)))
+
+# Check for infinite values in each column
+any_inf <- sapply(df_regression_no_zincome, function(x) any(is.infinite(x)))
+
+# Print the results
+print(any_na)
+print(any_inf)
+
+```
+
+#Analysis with Christina Data
+##Yengo
+
+###Total
+```{r}
+SRIQuantReg(G = "yengogrs", Y = "log_income", X = "BMI", C = c("Age", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_regression_no_zincome, Name = "SRI_log_Yengo_NZI_Chris")
+```
+
+```{r}
+SRIQuantReg(G = "yengogrs", Y = "prob_income_positive", X = "BMI", C = c("Age", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_regression_no_na, Name = "SRI_Prob_Yengo_Chris")
+```
+
+###Male
+```{r}
+SRIQuantReg(G = "yengogrs", Y = "log_income", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_regression_male_NZI, Name = "SRI_log_Yengo_NZI_male_Chris")
+```
+
+```{r}
+SRIQuantReg(G = "yengogrs", Y = "prob_income_positive", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_regression_male, Name = "SRI_Prob_Yengo_male_Chris")
+```
+
+###Female
+```{r}
+SRIQuantReg(G = "yengogrs", Y = "log_income", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_regression_female_NZI, Name = "SRI_log_Yengo_NZI_female_Chris")
+```
+
+```{r}
+SRIQuantReg(G = "yengogrs", Y = "prob_income_positive", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_regression_female, Name = "SRI_Prob_Yengo_female_Chris")
+```
+##Locke
+
+###Total
+```{r}
+SRIQuantReg(G = "lockegrs", Y = "log_income", X = "BMI", C = c("Age", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_regression_no_zincome, Name = "SRI_log_Locke_NZI_Chris")
+```
+
+```{r}
+SRIQuantReg(G = "lockegrs", Y = "prob_income_positive", X = "BMI", C = c("Age", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_regression_no_na, Name = "SRI_Prob_Locke_Chris")
+```
+
+
+###Male
+```{r}
+SRIQuantReg(G = "lockegrs", Y = "log_income", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_regression_male_NZI, Name = "SRI_log_Locke_NZI_male_Chris")
+```
+
+```{r}
+SRIQuantReg(G = "lockegrs", Y = "prob_income_positive", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_regression_male, Name = "SRI_Prob_Locke_male_Chris")
+```
+
+###Female
+```{r}
+SRIQuantReg(G = "lockegrs", Y = "log_income", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_regression_female_NZI, Name = "SRI_log_Locke_NZI_female_Chris")
+```
+
+```{r}
+SRIQuantReg(G = "lockegrs", Y = "prob_income_positive", X = "BMI", C = c("Age", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_regression_female, Name = "SRI_Prob_Locke_female_Chris")
+```
+
