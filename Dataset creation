@@ -1,0 +1,846 @@
+---
+title: "Create Dataset 3.0"
+output: html_notebook
+---
+
+#Preperations
+
+Delete everything
+```{r}
+rm(list = ls())
+```
+
+Load the packages
+```{r}
+library(haven)
+library(dplyr)
+library(tidyr)
+library(foreign)
+library(psych)
+library(parallel)
+library(ggplot2)
+```
+
+Load the right datasets
+```{r}
+HUNT_RAW <- read_dta("work/workbench/r.a.schepers/archive/HUNT/2022_ny_originalfil.dta")
+YENGO_score <- read_dta("work/workbench/r.a.schepers/work/newyengoscore.dta")
+incomedata <- read_sav("work/workbench/r.a.schepers/archive/SSB/w161371_inntekt_g1993g2012.sav")
+EducationData <- read_dta("work/workbench/r.a.schepers/archive/SSB/utdanning_original.dta")
+Lock_score <- read_dta("work/workbench/r.a.schepers/work/newlockescore.dta")
+w161371_dodsaarsak <- read_dta("archive/SSB/w161371_dodsaarsak.dta")
+w161371_demografi_g2013 <- read_sav("archive/SSB/w161371_demografi_g2013.sav")
+```
+
+Make all the PID as character
+```{r}
+HUNT_RAW$PID_107099 <- as.character(HUNT_RAW$PID_107099)
+YENGO_score$PID_107099 <- as.character(YENGO_score$PID_107099)
+incomedata$PID_107099 <- as.character(incomedata$PID_107099)
+Lock_score$PID_107099 <- as.character(Lock_score$PID_107099)
+```
+
+#Create the dataset from HUNT, Lock and Yengo
+
+create a data set with the HUNT data needed
+```{r}
+Data <- HUNT_RAW[,c("PID_107099","Sex","PartAg_NT2BLQ1", "PartDat_NT2BLQ1", "Part_NT2BLQ1", "Part_NT3BLQ1", "InvMuniciUrb_NT2BLQ1", "MaritStat_NT2BLQ1", "SmoStat_NT2BLQ1", "BMI_NT2BLM", "PartAg_NT3BLQ1","PartAg_NT4BLQ1","PartDat_NT3BLQ1","PartDat_NT4BLQ1","InvMuniciUrb_NT3BLQ1","InvMuniciUrb_NT4BLQ1","MaritStat_NT3BLQ1","MaritStat_NT4BLQ1","SmoStat_NT3BLQ1","SmoStat_NT4BLQ1","Bmi_NT4BLM","BMI_NT3BLM","BirthYear")]
+```
+
+adding the YENGO data
+```{r}
+Data <- merge(Data, YENGO_score, by="PID_107099")
+```
+
+adding the Lock data
+```{r}
+Data <- merge(Data, Lock_score, by="PID_107099")
+```
+
+Filter out the dead
+```{r}
+Data <- merge(Data, w161371_dodsaarsak, by="PID_107099")
+Data$AARGANG <- as.numeric(Data$AARGANG)
+```
+
+```{r}
+Data <- merge(Data, w161371_demografi_g2013, by="PID_107099")
+```
+
+
+Create a variable to give the year of participation
+```{r}
+Data$PartYear_NT2 <- format(Data$PartDat_NT2BLQ1, "%Y")
+Data$PartYear_NT3 <- format(Data$PartDat_NT3BLQ1, "%Y")
+Data$PartYear_NT4 <- format(Data$PartDat_NT4BLQ1, "%Y")
+```
+
+#Make the education variable
+
+reshaping data (in total there are 15 bu - so we create 15 long feils and rejoin later)
+```{r}
+EduLong1 <- subset(EducationData, select=c("PID_107099", "bu_01", "aarmnd_01" ))
+EduLong1$buaarmnd <- 1
+colnames(EduLong1)[colnames(EduLong1) == 'bu_01'] <- 'bu'
+colnames(EduLong1)[colnames(EduLong1) == 'aarmnd_01'] <- 'aarmnd'
+
+EduLong2 <- subset(EducationData, select = c("PID_107099", "bu_02", "aarmnd_02"))
+EduLong2$buaarmnd <- 2
+colnames(EduLong2)[colnames(EduLong2) == 'bu_02'] <- 'bu'
+colnames(EduLong2)[colnames(EduLong2) == 'aarmnd_02'] <- 'aarmnd'
+
+EduLong3 <- subset(EducationData, select = c("PID_107099", "bu_03", "aarmnd_03"))
+EduLong3$buaarmnd <- 3
+colnames(EduLong3)[colnames(EduLong3) == 'bu_03'] <- 'bu'
+colnames(EduLong3)[colnames(EduLong3) == 'aarmnd_03'] <- 'aarmnd'
+
+EduLong4 <- subset(EducationData, select = c("PID_107099", "bu_04", "aarmnd_04"))
+EduLong4$buaarmnd <- 4
+colnames(EduLong4)[colnames(EduLong4) == 'bu_04'] <- 'bu'
+colnames(EduLong4)[colnames(EduLong4) == 'aarmnd_04'] <- 'aarmnd'
+
+EduLong5 <- subset(EducationData, select = c("PID_107099", "bu_05", "aarmnd_05"))
+EduLong5$buaarmnd <- 5
+colnames(EduLong5)[colnames(EduLong5) == 'bu_05'] <- 'bu'
+colnames(EduLong5)[colnames(EduLong5) == 'aarmnd_05'] <- 'aarmnd'
+
+EduLong6 <- subset(EducationData, select = c("PID_107099", "bu_06", "aarmnd_06"))
+EduLong6$buaarmnd <- 6
+colnames(EduLong6)[colnames(EduLong6) == 'bu_06'] <- 'bu'
+colnames(EduLong6)[colnames(EduLong6) == 'aarmnd_06'] <- 'aarmnd'
+
+EduLong7 <- subset(EducationData, select = c("PID_107099", "bu_07", "aarmnd_07"))
+EduLong7$buaarmnd <- 7
+colnames(EduLong7)[colnames(EduLong7) == 'bu_07'] <- 'bu'
+colnames(EduLong7)[colnames(EduLong7) == 'aarmnd_07'] <- 'aarmnd'
+
+EduLong8 <- subset(EducationData, select = c("PID_107099", "bu_08", "aarmnd_08"))
+EduLong8$buaarmnd <- 8
+colnames(EduLong8)[colnames(EduLong8) == 'bu_08'] <- 'bu'
+colnames(EduLong8)[colnames(EduLong8) == 'aarmnd_08'] <- 'aarmnd'
+
+EduLong9 <- subset(EducationData, select = c("PID_107099", "bu_09", "aarmnd_09"))
+EduLong9$buaarmnd <- 9
+colnames(EduLong9)[colnames(EduLong9) == 'bu_09'] <- 'bu'
+colnames(EduLong9)[colnames(EduLong9) == 'aarmnd_09'] <- 'aarmnd'
+
+EduLong10 <- subset(EducationData, select = c("PID_107099", "bu_10", "aarmnd_10"))
+EduLong10$buaarmnd <- 10
+colnames(EduLong10)[colnames(EduLong10) == 'bu_10'] <- 'bu'
+colnames(EduLong10)[colnames(EduLong10) == 'aarmnd_10'] <- 'aarmnd'
+
+EduLong11 <- subset(EducationData, select = c("PID_107099", "bu_11", "aarmnd_11"))
+EduLong11$buaarmnd <- 11
+colnames(EduLong11)[colnames(EduLong11) == 'bu_11'] <- 'bu'
+colnames(EduLong11)[colnames(EduLong11) == 'aarmnd_11'] <- 'aarmnd'
+
+EduLong12 <- subset(EducationData, select = c("PID_107099", "bu_12", "aarmnd_12"))
+EduLong12$buaarmnd <- 12
+colnames(EduLong12)[colnames(EduLong12) == 'bu_12'] <- 'bu'
+colnames(EduLong12)[colnames(EduLong12) == 'aarmnd_12'] <- 'aarmnd'
+
+EduLong13 <- subset(EducationData, select = c("PID_107099", "bu_13", "aarmnd_13"))
+EduLong13$buaarmnd <- 13
+colnames(EduLong13)[colnames(EduLong13) == 'bu_13'] <- 'bu'
+colnames(EduLong13)[colnames(EduLong13) == 'aarmnd_13'] <- 'aarmnd'
+
+EduLong14 <- subset(EducationData, select = c("PID_107099", "bu_14", "aarmnd_14"))
+EduLong14$buaarmnd <- 14
+colnames(EduLong14)[colnames(EduLong14) == 'bu_14'] <- 'bu'
+colnames(EduLong14)[colnames(EduLong14) == 'aarmnd_14'] <- 'aarmnd'
+
+EduLong15 <- subset(EducationData, select = c("PID_107099", "bu_15", "aarmnd_15"))
+EduLong15$buaarmnd <- 15
+colnames(EduLong15)[colnames(EduLong15) == 'bu_15'] <- 'bu'
+colnames(EduLong15)[colnames(EduLong15) == 'aarmnd_15'] <- 'aarmnd'
+```
+
+recombining the data again
+```{r}
+EduLong <- rbind(na.omit(EduLong1), na.omit(EduLong2))
+EduLong <- rbind(EduLong, na.omit(EduLong3))
+EduLong <- rbind(EduLong, na.omit(EduLong4))
+EduLong <- rbind(EduLong, na.omit(EduLong5))
+EduLong <- rbind(EduLong, na.omit(EduLong6))
+EduLong <- rbind(EduLong, na.omit(EduLong7))
+EduLong <- rbind(EduLong, na.omit(EduLong8))
+EduLong <- rbind(EduLong, na.omit(EduLong9))
+EduLong <- rbind(EduLong, na.omit(EduLong10))
+EduLong <- rbind(EduLong, na.omit(EduLong12))
+EduLong <- rbind(EduLong, na.omit(EduLong13))
+EduLong <- rbind(EduLong, na.omit(EduLong14))
+EduLong <- rbind(EduLong, na.omit(EduLong15))
+mydata <- EduLong
+```
+
+
+```{r}
+mydata$PID_107099 <- as.numeric(as.character(mydata$PID_107099))
+mydata$bu <- as.numeric(as.character(mydata$bu))
+
+options(scipen = 999)
+mydata <- mydata[order(mydata$PID_107099),]
+
+#Change the YYYYMM format to year in one column and month in the other
+newdata <- separate(mydata, aarmnd, c(paste0("V", LETTERS[1:2])),sep=c(4,4))
+head(newdata)
+
+# change names of relevant columns to year and month, respectively
+colnames(newdata)[colnames(newdata) == 'VA'] <- 'year'
+colnames(newdata)[5]<-"month"
+
+# change the name of the buuaarmnd to something that makes more sense
+colnames(newdata)[colnames(newdata) == 'buaarmnd'] <- 'EducationSeq'
+```
+
+```{r}
+## extract the part of the education variable that we careabout (the first digit only)
+newdata <- newdata %>% separate(bu, into = c('mybu', 'todrop'), sep = 1)
+table(newdata$mybu)
+
+newdata$Bu_Edu <- newdata$mybu
+## setting those that are defined as having missing education as missing
+newdata$Bu_Edu[newdata$Bu_Edu==9] <-"NA"
+
+
+## keep only what we are interested in 
+newdata <- subset(newdata, select=c("PID_107099", "mybu", "Bu_Edu", "year", "month"))
+```
+
+```{r}
+data_HUNT3 <- subset(newdata, newdata$year<=2008)
+
+## this is for HUNT3
+maxdata_HUNT3 <- aggregate(Bu_Edu ~ PID_107099, data = data_HUNT3, max)
+table(maxdata_HUNT3$Bu_Edu)
+
+maxdata_HUNT3$Bu_Edu <- factor(maxdata_HUNT3$Bu_Edu, levels = c(0, 1, 2, 3, 4, 5, 6, 7,8), labels = c("Primary school", "Primary school", "Primary school","Secondary school","Secondary school","Secondary school","Higher education short","Higher education long","Higher education long" ))
+
+```
+Merge this to the dataset
+```{r}
+maxdata_HUNT3$PID_107099 <- as.character(maxdata_HUNT3$PID_107099)
+
+Data <- merge(Data, maxdata_HUNT3, by= "PID_107099")
+```
+Delete all the unnecessary DF
+```{r}
+rm(data_HUNT3, EducationData, EduLong, EduLong1,EduLong2,EduLong3,EduLong4,EduLong5,EduLong6,EduLong7,EduLong8,EduLong9,EduLong10,EduLong11,EduLong12,EduLong13,EduLong14,EduLong15,mydata,maxdata_HUNT3,newdata)
+```
+
+#Make dummies for the HUNT groups
+```{r}
+Data$D_HUNT2 <- as.integer(!is.na(Data$PartDat_NT2BLQ1))
+Data$D_HUNT3 <- as.integer(!is.na(Data$PartDat_NT3BLQ1))
+Data$D_HUNT4 <- as.integer(!is.na(Data$PartDat_NT4BLQ1))
+```
+
+#Make income variable
+Make income more clear
+```{r}
+incomedata <- incomedata[,c("PID_107099","wyrkinnt_2006","wyrkinnt_2007","wyrkinnt_2008", "wyrkinnt_1995", "wyrkinnt_1996", "wyrkinnt_1997", "wsaminnt_1997", "wsaminnt_2008")]
+Data <- merge(Data, incomedata, by="PID_107099")
+```
+
+Income for HUNT2
+```{r}
+Data$income_HUNT2 <- ifelse(Data$D_HUNT2 == 1, Data$wyrkinnt_1997, NA)
+#Data$income_HUNT2 <- ifelse(Data$D_HUNT2 == 1, Data$wsaminnt_1997, NA)
+```
+Income for HUNT3
+```{r}
+Data$income_HUNT3 <- ifelse(Data$D_HUNT3 == 1, Data$wyrkinnt_2008, NA)
+#Data$income_HUNT3 <- ifelse(Data$D_HUNT3 == 1, Data$wsaminnt_2008, NA)
+```
+Income for HUNT4
+
+Common income variable based on last income reported
+```{r}
+Data <- Data %>%
+  rowwise() %>%
+  mutate(income = case_when(
+    !is.na(PartYear_NT3) & PartYear_NT3 == 2006 ~ wyrkinnt_2006,
+    !is.na(PartYear_NT3) & PartYear_NT3 == 2007 ~ wyrkinnt_2007,
+    !is.na(PartYear_NT3) & PartYear_NT3 == 2008 ~ wyrkinnt_2008,
+    is.na(PartYear_NT3) & PartYear_NT2 == 1995 ~ wyrkinnt_1995,
+    is.na(PartYear_NT3) & PartYear_NT2 == 1996 ~ wyrkinnt_1996,
+    is.na(PartYear_NT3) & PartYear_NT2 == 1997 ~ wyrkinnt_1997,
+    TRUE ~ NA_real_
+  ),
+  year_income = ifelse(!is.na(PartYear_NT3), PartYear_NT3, PartYear_NT2)
+)
+```
+#Add income for those only in HUNT4
+Use the Data from 2008 down to 2006 for HUNT4
+```{r}
+Data$income <- ifelse(is.na(Data$income), 
+                      ifelse(!is.na(Data$wyrkinnt_2008) & Data$wyrkinnt_2008 != 0, Data$wyrkinnt_2008,
+                             ifelse(!is.na(Data$wyrkinnt_2007) & Data$wyrkinnt_2007 != 0, Data$wyrkinnt_2007,
+                                    ifelse(!is.na(Data$wyrkinnt_2006) & Data$wyrkinnt_2006 != 0, Data$wyrkinnt_2006,
+                                           ifelse(!is.na(Data$wyrkinnt_1997) & Data$wyrkinnt_1997 != 0, Data$wyrkinnt_1997,
+                                                  ifelse(!is.na(Data$wyrkinnt_1996) & Data$wyrkinnt_1996 != 0, Data$wyrkinnt_1996,
+                                                         ifelse(!is.na(Data$wyrkinnt_1995) & Data$wyrkinnt_1995 != 0, Data$wyrkinnt_1995, NA)))))),
+                      Data$income)
+
+```
+Mark the year used for inflation correction
+```{r}
+Data$Date_income <- ifelse(!is.na(Data$income) & Data$income == Data$wyrkinnt_2008, 2008,
+                           ifelse(!is.na(Data$income) & Data$income == Data$wyrkinnt_2007, 2007,
+                                  ifelse(!is.na(Data$income) & Data$income == Data$wyrkinnt_2006, 2006,
+                                       ifelse(!is.na(Data$income) & Data$income == Data$wyrkinnt_1997, 1997,
+                                              ifelse(!is.na(Data$income) & Data$income == Data$wyrkinnt_1996, 1996,
+                                                     ifelse(!is.na(Data$income) & Data$income == Data$wyrkinnt_1995, 1995,NA))))))
+
+Data$Date_income <- ifelse(is.na(Data$Date_income), Data$year_income, Data$Date_income)
+```
+Inflation correction to the income variable to 2020
+```{r}
+Data$income_2020 <- round(ifelse(!is.na(Data$income) & !is.na(Data$Date_income),
+                           ifelse(Data$Date_income == "2006", Data$income * (1+((112.2-84.2)/84.2)),
+                                  ifelse(Data$Date_income == "2007", Data$income * (1+((112.2-84.8)/84.8)),
+                                         ifelse(Data$Date_income == "2008", Data$income * (1+((112.2-88.0)/88.0)),
+                                                ifelse(Data$Date_income == "1995", Data$income * (1+((112.2-67.3)/67.3)),
+                                                       ifelse(Data$Date_income == "1996", Data$income * (1+((112.2-68.3)/68.3)),
+                                                              ifelse(Data$Date_income == "1997", Data$income * (1+((112.2-69.9)/69.9)),
+                                                NA)))))),
+                           NA), 2)
+```
+
+#Create common variables for Sex, Urbanity, Marital and smoking status
+Urbanity
+```{r}
+Data$Urbanity <- ifelse(!is.na(Data$InvMuniciUrb_NT3BLQ1), Data$InvMuniciUrb_NT3BLQ1,
+                        ifelse(!is.na(Data$InvMuniciUrb_NT2BLQ1), Data$InvMuniciUrb_NT2BLQ1,
+                               ifelse(!is.na(Data$InvMuniciUrb_NT4BLQ1), Data$InvMuniciUrb_NT4BLQ1, NA)))
+
+Data$Urbanity <- as.character(Data$Urbanity)
+Data$Urbanity <- factor(Data$Urbanity, levels = c(1, 2), labels = c("Urban", "Rural"))
+
+```
+HUNT 2 Urbanity
+```{r}
+Data$Urb_HUNT2 <- Data$InvMuniciUrb_NT2BLQ1
+Data$Urb_HUNT2 <- as.character(Data$Urb_HUNT2)
+Data$Urb_HUNT2 <- factor(Data$Urb_HUNT2, levels = c(1, 2), labels = c("Urban", "Rural"))
+```
+HUNT 3 Urbanity
+```{r}
+Data$Urb_HUNT3 <- Data$InvMuniciUrb_NT3BLQ1
+Data$Urb_HUNT3 <- as.character(Data$Urb_HUNT3)
+Data$Urb_HUNT3 <- factor(Data$Urb_HUNT3, levels = c(1, 2), labels = c("Urban", "Rural"))
+```
+Marital status
+```{r}
+Data$Marital <- ifelse(!is.na(Data$MaritStat_NT3BLQ1), Data$MaritStat_NT3BLQ1,
+                       ifelse(!is.na(Data$MaritStat_NT2BLQ1), Data$MaritStat_NT2BLQ1,
+                              ifelse(!is.na(Data$MaritStat_NT4BLQ1), Data$MaritStat_NT4BLQ1, NA)))
+
+Data$Marital <- as.character(Data$Marital)
+Data$Marital <- factor(Data$Marital, levels = c(1, 2, 3, 4, 5), labels = c("Unmarried", "Married", "Widow, widower", "Divorced", "Separated"))
+
+```
+HUNT2 Marital status
+```{r}
+Data$Mar_HUNT2 <- Data$MaritStat_NT2BLQ1
+Data$Mar_HUNT2 <- as.character(Data$Mar_HUNT2)
+Data$Mar_HUNT2 <- factor(Data$Mar_HUNT2, levels = c(1, 2, 3, 4, 5), labels = c("Unmarried", "Married", "Widow, widower", "Divorced", "Separated"))
+```
+HUNT3 Marital status
+```{r}
+Data$Mar_HUNT3 <- Data$MaritStat_NT3BLQ1
+Data$Mar_HUNT3 <- as.character(Data$Mar_HUNT3)
+Data$Mar_HUNT3 <- factor(Data$Mar_HUNT3, levels = c(1, 2, 3, 4, 5), labels = c("Unmarried", "Married", "Widow, widower", "Divorced", "Separated"))
+```
+Smoking status
+```{r}
+Data$Smoking <- ifelse(!is.na(Data$SmoStat_NT3BLQ1), Data$SmoStat_NT3BLQ1,
+                       ifelse(!is.na(Data$SmoStat_NT2BLQ1), Data$SmoStat_NT2BLQ1,
+                              ifelse(!is.na(Data$SmoStat_NT4BLQ1), Data$SmoStat_NT4BLQ1, NA)))
+
+Data$Smoking <- as.character(Data$Smoking)
+Data$Smoking <- factor(Data$Smoking, levels = c(0, 1, 2, 3, 4), labels = c("Never smoked", "Ex daily smoker", "Current daily smoker", "Current occasional smoker", "Ex occasional smoker"))
+
+```
+HUNT2 Smoking status
+```{r}
+Data$Smok_HUNT2 <- Data$SmoStat_NT2BLQ1
+Data$Smok_HUNT2 <- as.character(Data$Smok_HUNT2)
+Data$Smok_HUNT2 <- factor(Data$Smok_HUNT2, levels = c(0, 1, 2, 3, 4), labels = c("Never smoked", "Ex daily smoker", "Current daily smoker", "Current occasional smoker", "Ex occasional smoker"))
+```
+HUNT3 Smoking status
+```{r}
+Data$Smok_HUNT3 <- Data$SmoStat_NT3BLQ1
+Data$Smok_HUNT3 <- as.character(Data$Smok_HUNT3)
+Data$Smok_HUNT3 <- factor(Data$Smok_HUNT3, levels = c(0, 1, 2, 3, 4), labels = c("Never smoked", "Ex daily smoker", "Current daily smoker", "Current occasional smoker", "Ex occasional smoker"))
+```
+Sex
+```{r}
+Data$Sex <- as.factor(Data$Sex)
+Data$Sex <- factor(Data$Sex, levels = c(0, 1), labels = c("Female", "Male"))
+```
+
+#BMI
+create a new BMI variable
+```{r}
+Data$BMI <- NA
+```
+Use HUNT3 when available
+```{r}
+Data$BMI <- ifelse(!is.na(Data$BMI_NT3BLM), Data$BMI_NT3BLM, Data$BMI)
+```
+Impute HUNT3 using linear regression on HUNT4
+```{r}
+# Subset data with both BMI_NT3BLM and Bmi_NT4BLM
+subset_data <- Data[complete.cases(Data[, c("BMI_NT3BLM", "Bmi_NT4BLM")]), ]
+
+# Check if there are enough observations for regression
+if (nrow(subset_data) > 1) {
+  # Perform linear regression
+  regression_model <- lm(BMI_NT3BLM ~ Bmi_NT4BLM, data = subset_data)
+
+  # Bootstrap the regression coefficient
+  bootstrap_iterations <- 2000
+  beta_bootstraps <- numeric(bootstrap_iterations)
+
+  set.seed(123)  # Set seed for reproducibility
+  for (i in 1:bootstrap_iterations) {
+    # Sample with replacement
+    sampled_data <- subset_data[sample(nrow(subset_data), replace = TRUE), ]
+    
+    # Fit model on sampled data
+    bootstrap_model <- lm(BMI_NT3BLM ~ Bmi_NT4BLM, data = sampled_data)
+    
+    # Store the bootstrapped coefficient
+    beta_bootstraps[i] <- coef(bootstrap_model)[2]
+  }
+
+  
+  # Use the median of bootstrapped coefficients to predict BMI_NT3BLM
+  median_beta <- median(beta_bootstraps)
+  Data$BMI <- ifelse(is.na(Data$BMI_NT3BLM) & !is.na(Data$Bmi_NT4BLM),
+                              regression_model$coefficients[1] + median_beta * Data$Bmi_NT4BLM,
+                              Data$BMI)
+}
+```
+If this is still not available use HUNT2
+```{r}
+Data$BMI <- ifelse(is.na(Data$BMI), Data$BMI_NT2BLM, Data$BMI)
+```
+Create BMI groups for descriptive statistics
+```{r}
+breaks <- c(-Inf, 18.5, 24.9, 29.9, 34.9, Inf)
+labels <- c("Underweight", "Normal weight", "Overweight", "Class I obesity", "Class II obesity")
+Data$Bmi_Group <- cut(Data$BMI, breaks = breaks, labels = labels, include.lowest = TRUE)
+```
+HUNT2 BMI
+```{r}
+Data$BMI_HUNT2 <- Data$BMI_NT2BLM
+```
+HUNT3 BMI
+```{r}
+Data$BMI_HUNT3 <- Data$BMI_NT3BLM
+```
+
+#Age
+Calculate the age for the people in HUNT4 for the time their income is used
+```{r}
+Data$PartYear_NT4 <- as.numeric(Data$PartYear_NT4)
+Data$Date_income <- as.numeric(Data$Date_income)
+Data$DiffY <- Data$PartYear_NT4-Data$Date_income
+Data$PartAge4 <- Data$PartAg_NT4BLQ1 - Data$DiffY
+```
+Take the age connected to the income year used
+```{r}
+Data <- Data %>%
+  mutate(Age = case_when(
+    !is.na(year_income) & year_income %in% c(1995, 1996, 1997) ~ as.numeric(PartAg_NT2BLQ1),
+    !is.na(year_income) & year_income %in% c(2006, 2007, 2008) ~ as.numeric(PartAg_NT3BLQ1),
+    is.na(year_income) ~ as.numeric(PartAge4),
+    TRUE ~ NA_real_
+  ))
+```
+Age HUNT2
+```{r}
+Data$Age_HUNT2 <- Data$PartAg_NT2BLQ1
+Data$Age_HUNT2 <- as.numeric(Data$Age_HUNT2)
+```
+Age HUNT3
+```{r}
+Data$Age_HUNT3 <- Data$PartAg_NT3BLQ1
+Data$Age_HUNT3 <- as.numeric(Data$Age_HUNT3)
+```
+
+
+#Filter out everybody above the age of 67
+```{r}
+Data <- Data %>%
+  filter(Age < 67)
+Data <- Data %>% filter(Age > 17)
+```
+
+#Create different datasets
+Total dataset
+```{r}
+df_regression <- Data[,c("PID_107099","Sex", "Smoking", "Urbanity", "Marital", "Bu_Edu", "income", "Age", "yengogrs","z_newyengoscore","BMI","Bmi_Group","lockegrs","z_newlockescore","AARGANG","BirthYear","statuskode","tillanddato","forstdato", "D_HUNT2","D_HUNT3","D_HUNT4", "income_2020")]
+```
+HUNT2
+```{r}
+df_HUNT2 <- Data[Data$D_HUNT2 == 1, ]
+df_HUNT2 <- df_HUNT2[,c("PID_107099","Sex","income_HUNT2", "Urb_HUNT2", "Mar_HUNT2", "Smok_HUNT2", "BMI_HUNT2", "Age_HUNT2", "yengogrs","z_newyengoscore", "lockegrs","z_newlockescore","D_HUNT2", "Bu_Edu","AARGANG","statuskode","tillanddato","forstdato","BirthYear")]
+```
+HUNT3
+```{r}
+df_HUNT3 <- Data[Data$D_HUNT3 == 1, ]
+df_HUNT3 <- df_HUNT3[,c("PID_107099","Sex","income_HUNT3", "Urb_HUNT3", "Mar_HUNT3", "Smok_HUNT3", "BMI_HUNT3", "Age_HUNT3", "yengogrs","z_newyengoscore", "lockegrs","z_newlockescore","D_HUNT3", "Bu_Edu", "AARGANG","statuskode","tillanddato","forstdato","BirthYear")]
+```
+#Take out the death and the emigrated
+```{r}
+df_HUNT2 <- df_HUNT2 %>% filter(is.na(AARGANG) | AARGANG >= 1997)
+df_HUNT3 <- df_HUNT3 %>% filter(is.na(AARGANG) | AARGANG >= 2008)
+```
+
+```{r}
+#df_HUNT3 <- df_HUNT3 %>% filter(!(statuskode == 3 & tillanddato >= 20080000 & forstdato <= 20080000))
+
+#df_HUNT3 <- df_HUNT3 %>% filter(!(statuskode == 3))
+
+#df_HUNT3 <- df_HUNT3 %>% filter(!(tillanddato >= 20080000 & forstdato <= 20080000))
+
+df_HUNT3 <- df_HUNT3 %>% filter(!(statuskode == 3 & 5))
+```
+
+```{r}
+#df_HUNT2 <- df_HUNT2 %>% filter(!(statuskode == 3 & tillanddato >= 19970000 & forstdato <= 19970000))
+
+#df_HUNT2 <- df_HUNT2 %>% filter(!(statuskode == 3))
+
+#df_HUNT2 <- df_HUNT2 %>% filter(!(tillanddato >= 19970000 & forstdato <= 19970000))
+
+df_HUNT2 <- df_HUNT2 %>% filter(!(statuskode == 3 & 5))
+```
+
+```{r}
+df_regression <- df_regression %>% filter(!(statuskode == 3 & 5))
+```
+
+
+#Duplicate Dataset of Christina
+```{r}
+# Assuming your dataframes are named df_HUNT2 and df_HUNT3
+df_Christina <- bind_rows(
+  df_HUNT3 %>%
+    filter(!is.na(PID_107099)),
+  df_HUNT2 %>%
+    filter(!PID_107099 %in% df_HUNT3$PID_107099)
+)
+```
+Urbanity
+```{r}
+df_Christina$Urbanity <- df_Christina$Urb_HUNT3
+df_Christina$Urbanity <- ifelse(is.na(df_Christina$Urbanity), df_Christina$Urb_HUNT2, df_Christina$Urbanity)
+```
+Marital status
+```{r}
+df_Christina$Marital <- df_Christina$Mar_HUNT3
+df_Christina$Marital <- ifelse(is.na(df_Christina$Marital), df_Christina$Mar_HUNT2, df_Christina$Marital)
+```
+Smoking
+```{r}
+df_Christina$Smoking <- df_Christina$Smok_HUNT3
+df_Christina$Smoking <- ifelse(is.na(df_Christina$Smoking), df_Christina$Smok_HUNT2, df_Christina$Smoking)
+```
+BMI
+```{r}
+df_Christina$BMI <- df_Christina$BMI_HUNT3
+df_Christina$BMI <- ifelse(is.na(df_Christina$BMI), df_Christina$BMI_HUNT2, df_Christina$BMI)
+```
+Age
+```{r}
+df_Christina$Age <- df_Christina$Age_HUNT3
+df_Christina$Age <- ifelse(is.na(df_Christina$Age), df_Christina$Age_HUNT2, df_Christina$Age)
+```
+
+Income
+```{r}
+#Calculate the income for 2016
+df_Christina$income_HUNT2_2016 <- df_Christina$income_HUNT2*(1+((103.6-69.9)/69.9))
+df_Christina$income_HUNT3_2016 <- df_Christina$income_HUNT3*(1+((103.6-88.0)/88.0))
+
+#Save the right one
+df_Christina$Income <- df_Christina$income_HUNT3
+df_Christina$Income <- ifelse(is.na(df_Christina$Income), df_Christina$income_HUNT2, df_Christina$Income)
+
+#Convert to 2016Euro
+conversion_rate <- 9.29
+df_Christina$Income_Eur <- df_Christina$Income / conversion_rate
+
+#Create a natural Log
+df_Christina$log_income <- log1p(df_Christina$Income_Eur)
+```
+Filter out those with N/A or negative income
+```{r}
+df_Christina <- subset(df_Christina, !is.na(Income_Eur))
+```
+Filter out those with N/A BMI
+```{r}
+df_Christina <- subset(df_Christina, !is.na(BMI))
+```
+Filter out the unknown sex
+```{r}
+df_Christina <- subset(df_Christina, !is.na(Sex))
+```
+Filter out N/A education
+```{r}
+df_Christina <- subset(df_Christina, !is.na(Bu_Edu))
+```
+
+```{r}
+# Fit linear probability model
+lpm_model <- lm(Income_Eur > 0 ~ Age + Sex + Smoking + Marital + BMI + Urbanity + Bu_Edu, data = df_Christina)
+
+# Extract predicted probabilities
+predicted_prob <- predict(lpm_model, type = "response")
+
+# Check dimensions
+nrow_df <- nrow(df_Christina)
+length_predicted <- length(predicted_prob)
+
+# Assign predicted probabilities to df_regression
+if (nrow_df != length_predicted) {
+  # Create a vector of NAs with length equal to the number of rows in df_regression
+  missing_values <- rep(NA, nrow_df)
+  
+  # Update the appropriate rows with predicted probabilities
+  missing_values[seq_along(predicted_prob)] <- predicted_prob
+  
+  # Assign the modified vector to the dataframe
+  df_Christina$prob_income_positive <- missing_values
+} else {
+  # Assign predicted probabilities to df_regression
+  df_Christina$prob_income_positive <- predicted_prob
+}
+
+```
+
+
+Create the groups for descriptive statistics
+```{r}
+breaks <- c(-Inf, 18.5, 24.9, 29.9, 34.9, Inf)
+labels <- c("Underweight", "Normal weight", "Overweight", "Class I obesity", "Class II obesity")
+df_Christina$Bmi_Group <- cut(df_Christina$BMI, breaks = breaks, labels = labels, include.lowest = TRUE)
+
+breaks <- c(18, 25, 45, 67)  # Define the age group breaks
+labels <- c("18-24", "25-44", "45-66")  # Labels for the age groups
+
+df_Christina$Age_group <- cut(df_Christina$Age, breaks = breaks, labels = labels, include.lowest = TRUE)
+```
+Make tables
+```{r}
+table(df_Christina$Sex)
+table(df_Christina$Age_group, useNA = "always")
+table(df_Christina$Marital, useNA = "always")
+table(df_Christina$Bu_Edu, useNA = "always")
+table(df_Christina$Urbanity, useNA = "always")
+table(df_Christina$Smoking, useNA = "always")
+table(df_Christina$Bmi_Group, useNA = "always")
+```
+```{r}
+# Function to create table and percentage
+create_table_and_percentage <- function(variable, stratify_by) {
+  table_variable <- table(df_Christina[[variable]], df_Christina[[stratify_by]], useNA = "always")
+  table_variable_percentage <- prop.table(table_variable, margin = 2) * 100
+
+  # Display the table with percentages
+  cat(paste("Table for", variable, "and", stratify_by, ":\n"))
+  print(table_variable)
+  cat(paste("Percentage Table for", variable, "and", stratify_by, ":\n"))
+  print(table_variable_percentage)
+}
+
+# Call the function for each variable and stratify by Sex
+create_table_and_percentage("Age_group", "Sex")
+create_table_and_percentage("Marital", "Sex")
+create_table_and_percentage("Bu_Edu", "Sex")
+create_table_and_percentage("Urbanity", "Sex")
+create_table_and_percentage("Smoking", "Sex")
+create_table_and_percentage("Bmi_Group", "Sex")
+```
+Histograms
+```{r}
+ggplot(df_Christina, aes(x = Bmi_Group)) + 
+  geom_bar() +
+  labs(title = "Histogram of BMI Christina", x = "Bmi_Group", y = "Count")
+ggsave("Graphs/Histogram of BMI Christina.png", plot = last_plot())
+ggplot(df_Christina, aes(x = Smoking)) + 
+  geom_bar() +
+  labs(title = "Histogram of Smoking Christina", x = "Smoking", y = "Count")
+ggsave("Graphs/Histogram of Smoking Christina.png", plot = last_plot())
+ggplot(df_Christina, aes(x = Urbanity)) + 
+  geom_bar() +
+  labs(title = "Histogram of Urbanity Christina", x = "Urbanity", y = "Count")
+ggsave("Graphs/Histogram of Urbanity Christina.png", plot = last_plot())
+ggplot(df_Christina, aes(x = Marital)) + 
+  geom_bar() +
+  labs(title = "Histogram of Marital Christina", x = "Marital", y = "Count")
+ggsave("Graphs/Histogram of Marital Christina.png", plot = last_plot())
+ggplot(df_Christina, aes(x = Bu_Edu)) + 
+  geom_bar() +
+  labs(title = "Histogram of Education Christina", x = "Education", y = "Count")
+ggsave("Graphs/Histogram of Education Christina.png", plot = last_plot())
+ggplot(df_Christina, aes(x = Sex)) + 
+  geom_bar() +
+  labs(title = "Histogram of Sex Christina", x = "Sex", y = "Count")
+ggsave("Graphs/Histogram of Sex Christina.png", plot = last_plot())
+ggplot(df_Christina, aes(Income_Eur)) + geom_histogram() + ggtitle("Histogram of Income distrubution Christina")
+ggsave("Graphs/Histogram of Income distrubution Christina.png", plot = last_plot())
+ggplot(df_Christina, aes(yengogrs)) + geom_histogram() + ggtitle("Histogram of GRS based on Yengo Christina")
+ggsave("Graphs/Histogram of GRS Yengo Christina.png", plot = last_plot())
+ggplot(df_Christina, aes(lockegrs)) + geom_histogram() + ggtitle("Histogram of GRS based on locke Christina")
+ggsave("Graphs/Histogram of GRS Locke Christina.png", plot = last_plot())
+ggplot(df_Christina, aes(Age)) + geom_histogram() + ggtitle("Age distrubution Christina")
+ggsave("Graphs/Histogram of Age Christina.png", plot = last_plot())
+```
+
+
+
+Recode the dummy variables
+```{r}
+df_Christina <- df_Christina %>%
+  mutate(D_HUNT3 = if_else(is.na(D_HUNT3) | D_HUNT3 != 1, 0, 1))
+df_Christina <- df_Christina %>%
+  mutate(D_HUNT2 = if_else(is.na(D_HUNT2) | D_HUNT2 != 1, 0, 1))
+```
+
+Save only the needed variables
+```{r}
+df_Christina <- df_Christina[,c("PID_107099","Sex","Smoking", "Urbanity", "Marital", "Bu_Edu", "BMI", "yengogrs","z_newyengoscore", "lockegrs","z_newlockescore","D_HUNT3", "Age", "D_HUNT2", "Income_Eur", "log_income", "Bmi_Group","BirthYear","prob_income_positive")]
+```
+
+```{r}
+write.dta(df_Christina, "df_Christina.dta")
+```
+
+PGRS distribution
+```{r}
+ggplot(df_Christina, aes(yengogrs)) + geom_histogram() + ggtitle("Histogram of GRS based on Yengo")
+ggplot(df_Christina, aes(lockegrs)) + geom_histogram() + ggtitle("Histogram of GRS based on locke")
+
+t.test(df_Christina$yengogrs, df_Christina$lockegrs)
+```
+
+#Prepare the dataset for my analysis
+calculate the probability of having a positive income
+```{r}
+# Fit linear probability model
+lpm_model <- lm(income_2020 > 0 ~ Age + Sex + Smoking + Marital + BMI + Urbanity + Bu_Edu, data = df_regression)
+
+# Extract predicted probabilities
+predicted_prob <- predict(lpm_model, type = "response")
+
+# Check dimensions
+nrow_df <- nrow(df_regression)
+length_predicted <- length(predicted_prob)
+
+# Assign predicted probabilities to df_regression
+if (nrow_df != length_predicted) {
+  # Create a vector of NAs with length equal to the number of rows in df_regression
+  missing_values <- rep(NA, nrow_df)
+  
+  # Update the appropriate rows with predicted probabilities
+  missing_values[seq_along(predicted_prob)] <- predicted_prob
+  
+  # Assign the modified vector to the dataframe
+  df_regression$prob_income_positive <- missing_values
+} else {
+  # Assign predicted probabilities to df_regression
+  df_regression$prob_income_positive <- predicted_prob
+}
+
+```
+
+#Some basic descriptive statistics
+summary table
+```{r}
+summary_table <- describe(df_regression)
+summary_table
+table(df_regression$Sex)
+```
+Histograms
+```{r}
+ggplot(df_regression, aes(x = Bmi_Group)) + 
+  geom_bar() +
+  labs(title = "Histogram of BMI", x = "Bmi_Group", y = "Count")
+ggsave("Graphs/Histogram of BMI.png", plot = last_plot())
+ggplot(df_regression, aes(x = Smoking)) + 
+  geom_bar() +
+  labs(title = "Histogram of Smoking", x = "Smoking", y = "Count")
+ggsave("Graphs/Histogram of Smoking.png", plot = last_plot())
+ggplot(df_regression, aes(x = Urbanity)) + 
+  geom_bar() +
+  labs(title = "Histogram of Urbanity", x = "Urbanity", y = "Count")
+ggsave("Graphs/Histogram of Urbanity.png", plot = last_plot())
+ggplot(df_regression, aes(x = Marital)) + 
+  geom_bar() +
+  labs(title = "Histogram of Marital", x = "Marital", y = "Count")
+ggsave("Graphs/Histogram of Marital.png", plot = last_plot())
+ggplot(df_regression, aes(x = Bu_Edu)) + 
+  geom_bar() +
+  labs(title = "Histogram of Education", x = "Education", y = "Count")
+ggsave("Graphs/Histogram of Education.png", plot = last_plot())
+ggplot(df_regression, aes(x = Sex)) + 
+  geom_bar() +
+  labs(title = "Histogram of Sex", x = "Sex", y = "Count")
+ggsave("Graphs/Histogram of Sex.png", plot = last_plot())
+ggplot(df_regression, aes(income_2020)) + geom_histogram() + ggtitle("Histogram of Income distrubution")
+ggsave("Graphs/Histogram of Income distrubution.png", plot = last_plot())
+ggplot(df_regression, aes(yengogrs)) + geom_histogram() + ggtitle("Histogram of GRS based on Yengo")
+ggsave("Graphs/Histogram of GRS Yengo.png", plot = last_plot())
+ggplot(df_regression, aes(lockegrs)) + geom_histogram() + ggtitle("Histogram of GRS based on locke")
+ggsave("Graphs/Histogram of GRS Locke.png", plot = last_plot())
+ggplot(df_regression, aes(Age)) + geom_histogram() + ggtitle("Age distrubution")
+ggsave("Graphs/Histogram of Age.png", plot = last_plot())
+```
+
+Create the groups for descriptive statistics
+```{r}
+breaks <- c(-Inf, 18.5, 24.9, 29.9, 34.9, Inf)
+labels <- c("Underweight", "Normal weight", "Overweight", "Class I obesity", "Class II obesity")
+df_regression$Bmi_Group <- cut(df_regression$BMI, breaks = breaks, labels = labels, include.lowest = TRUE)
+
+breaks <- c(18, 25, 45, 67)  # Define the age group breaks
+labels <- c("18-24", "25-44", "45-66")  # Labels for the age groups
+
+df_regression$Age_group <- cut(df_regression$Age, breaks = breaks, labels = labels, include.lowest = TRUE)
+```
+
+```{r}
+# Function to create table and percentage
+create_table_and_percentage <- function(variable, stratify_by) {
+  table_variable <- table(df_regression[[variable]], df_regression[[stratify_by]], useNA = "always")
+  table_variable_percentage <- prop.table(table_variable, margin = 2) * 100
+
+  # Display the table with percentages
+  cat(paste("Table for", variable, "and", stratify_by, ":\n"))
+  print(table_variable)
+  cat(paste("Percentage Table for", variable, "and", stratify_by, ":\n"))
+  print(table_variable_percentage)
+}
+
+# Call the function for each variable and stratify by Sex
+create_table_and_percentage("Age_group", "Sex")
+create_table_and_percentage("Marital", "Sex")
+create_table_and_percentage("Bu_Edu", "Sex")
+create_table_and_percentage("Urbanity", "Sex")
+create_table_and_percentage("Smoking", "Sex")
+create_table_and_percentage("Bmi_Group", "Sex")
+```
+
+```{r}
+df_regression$d <- 1
+df_regression <- df_regression[,c("PID_107099","Sex", "Smoking", "Urbanity", "Marital", "Bu_Edu",  "Age", "yengogrs","BMI","lockegrs","BirthYear", "D_HUNT2","D_HUNT3","D_HUNT4", "income_2020", "prob_income_positive","d")]
+#df_regression <- write.csv(df_regression, "df_regression2.0.cvs")
+```
+
+
+
