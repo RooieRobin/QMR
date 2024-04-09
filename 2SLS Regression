@@ -1,0 +1,347 @@
+---
+title: "2SLS Analysis"
+output: html_notebook
+---
+
+#General preparations
+Delete everything
+```{r}
+rm(list = ls())
+```
+Load the packBirthYears
+```{r}
+library(haven)
+library(dplyr)
+library(tidyr)
+library(estimatr)
+library(foreign)
+library(psych)
+library(parallel)
+library(ivreg)
+library(quantreg)
+library(ggplot2)
+library(boot)
+library(snow)
+library(OneSampleMR)
+library(broom)
+library(readr)
+```
+
+#Data preparation HUNT2,HUNT3,HUNT4
+Load the dataset
+```{r}
+df_regression <- read_csv("2nd analysis/df_regression2.0.cvs")
+```
+Take away the NA
+```{r}
+df_regression_no_na <- na.omit(df_regression[, c("BMI", "yengogrs", "Smoking", "Urbanity", "BirthYear", "Marital", "Bu_Edu", "income_2020","D_HUNT2", "D_HUNT3", "lockegrs", "Sex", "prob_income_positive")])
+
+df_regression_no_na <- df_regression_no_na[df_regression_no_na$income_2020 >= 0, ]
+```
+Make a group for Non Zero Income
+Exclude those with an income=0
+```{r}
+df_regression_no_zincome <- df_regression_no_na[df_regression_no_na$income_2020 != 0, ]
+```
+Take away missing values from the variables
+```{r}
+df_regression_no_zincome <- na.omit(df_regression_no_zincome[, c("BMI", "yengogrs", "Smoking", "Urbanity", "BirthYear", "Marital", "Bu_Edu", "income_2020","D_HUNT2", "D_HUNT3", "lockegrs", "Sex", "prob_income_positive")])
+```
+Create log variables for income in both
+```{r}
+df_regression_no_na$log_income <- log1p(df_regression_no_na$income_2020)
+df_regression_no_zincome$log_income <- log(df_regression_no_zincome$income_2020)
+df_regression_no_zincome <- df_regression_no_zincome[!is.nan(df_regression_no_zincome$log_income), ]
+```
+Generate one for males and females
+```{r}
+df_regression_male <- subset(df_regression_no_na, Sex == "Male")
+df_regression_female <- subset(df_regression_no_na, Sex == "Female")
+df_regression_male_NZI <- subset(df_regression_no_zincome, Sex == "Male")
+df_regression_female_NZI <- subset(df_regression_no_zincome, Sex == "Female")
+```
+
+
+
+#Prepare the code
+```{r}
+SLSQuantReg <- function(G, Y, X, C, Data, Name) {
+  # Calculate deciles of the income variable
+  deciles <- quantile(Data[[Y]], probs = seq(0, 1, by = 0.1), na.rm = TRUE)
+  
+  # Create an empty list to store dataframes for each decile
+  decile_dfs <- list()
+  
+  # Loop through each decile and create a dataframe for that decile
+  for (i in 1:(length(deciles)-1)) {
+    lower_bound <- deciles[i]
+    upper_bound <- deciles[i+1]
+    
+    # Subset the dataframe for each decile
+    decile_df <- subset(Data, Data[[Y]] >= lower_bound & Data[[Y]] <= upper_bound)
+    
+    # Store the dataframe in the list with a meaningful name
+    decile_dfs[[paste0("decile_", i)]] <- decile_df
+  }
+  
+  # Create an empty dataframe
+  quantile_results <- data.frame(Quantile = character(), BMI_Coefficient = numeric(), BMI_Std_Error = numeric(), BMI_t_statistic = numeric(), BMI_p_value = numeric(), stringsAsFactors = FALSE)
+  
+  formula_string_first <- paste(X, "~",paste(c(G, C), collapse = " + "))
+  formula_string_full <- paste(Y, "~", X, "+", paste(C, collapse = " + "), "|", G, "+",paste(C, collapse = " + "))
+  
+  # Run the ivreg regression for each quantile and extract the desired information
+  for (i in 1:length(decile_dfs)) {
+    # Extract the dataframe for the current quantile
+    current_quantile <- decile_dfs[[i]]
+    
+    # Run the ivreg regression
+    Quantile <- ivreg(formula = formula_string_full, data = current_quantile)
+    
+    # Extract information for BMI
+    bmi_coef <- coef(summary(Quantile))["BMI", "Estimate"]
+    bmi_se <- coef(summary(Quantile))["BMI", "Std. Error"]
+    bmi_t_stat <- coef(summary(Quantile))["BMI", "t value"]
+    bmi_p_value <- coef(summary(Quantile))["BMI", "Pr(>|t|)"]
+    
+    # Append the results to the dataframe
+    quantile_results <- rbind(quantile_results, data.frame(Quantile = paste0("Quantile ", i),
+                                                           BMI_Coefficient = bmi_coef,
+                                                           BMI_Std_Error = bmi_se,
+                                                           BMI_t_statistic = bmi_t_stat,
+                                                           BMI_p_value = bmi_p_value,
+                                                           stringsAsFactors = FALSE))
+  }
+  
+  First_stBirthYear <- lm(formula = formula_string_first, data = Data)
+  Full <- ivreg(formula = formula_string_full, data = Data)
+  
+  
+  # Print the dataframe
+  # Calculate confidence intervals
+  quantile_results$ci_lower <- quantile_results$BMI_Coefficient - (1.96 * quantile_results$BMI_Std_Error)
+  quantile_results$ci_upper <- quantile_results$BMI_Coefficient + (1.96 * quantile_results$BMI_Std_Error)
+  
+  # Convert Quantile to numeric
+  quantile_results <- quantile_results %>%
+    mutate(Quantile = as.numeric(gsub("Quantile ", "", Quantile)) / 10)
+  
+  # Plot with rescaled Quantile and horizontal line at 0
+  plot <- ggplot(quantile_results, aes(x = Quantile, y = BMI_Coefficient)) +
+    geom_point() +
+    geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.1) +
+    geom_hline(yintercept = 0, linetype = "solid", color = "blue", size = 0.5) + 
+    geom_hline(yintercept = Full$coefficients["BMI"], linetype = "dashed", color = "red") +
+    labs(title = paste("BMI Coefficient plot (", Name, ") across Quantiles", sep = ""),
+         x = "Quantile", y = "BMI Coefficient") +
+    theme_minimal()
+  
+  # Print
+  print(summary(First_stBirthYear))
+  print(summary(Full))
+  print(plot)
+  print(quantile_results)
+  
+  # Save
+  # Extract coefficients, standard errors, t-statistics, and p-values for BMI
+  summary_stats_full <- summary(Full)$coefficients["BMI", c("Estimate", "Std. Error", "t value", "Pr(>|t|)")]
+  summary_stats_first <- summary(First_stBirthYear)$coefficients[paste(G), c("Estimate", "Std. Error", "t value", "Pr(>|t|)")]
+  # Extract diagnostic test for weak instrument
+  Sum_Full <- summary(Full)
+  diagnostic_test <- Sum_Full[["diagnostics"]]
+
+  # Extract weak instrument statistics and p-value
+  weak_instrument_statistic <- diagnostic_test[1, "statistic"]
+  weak_instrument_p_value <- diagnostic_test[1, "p-value"]
+
+  # Construct the data frame
+  result <- data.frame(
+    Coefficient_First = summary_stats_first["Estimate"],
+    SE_First = summary_stats_first["Std. Error"],
+    t_statistic_First = summary_stats_first["t value"],
+    p_value_First = summary_stats_first["Pr(>|t|)"],
+    Coefficient_Second = summary_stats_full["Estimate"],
+    SE_Second = summary_stats_full["Std. Error"],
+    t_statistic_Second = summary_stats_full["t value"],
+    p_value_Second = summary_stats_full["Pr(>|t|)"],
+    Weak_Instrument_Statistic = weak_instrument_statistic,
+    Weak_Instrument_p_value = weak_instrument_p_value
+  )
+ print(result)
+  # Construct the file path
+  file_path_Nor <- paste("Outcome tables/Normal", Name, ".csv", sep = "")
+
+  # Save results to a CSV file
+  write.csv(result, file = file_path_Nor, row.names = FALSE)
+  
+  # Construct the file path for Quantile
+  file_path_Quant <- paste("Outcome tables/Quantile", Name, ".csv", sep = "")
+  
+  # Save results to a CSV file for Quantile
+  write.csv(quantile_results, file = file_path_Quant, row.names = TRUE)
+  
+  # Save the plot
+  ggsave(paste("Graphs/Coefficient plot (", Name, ") QuantReg.png", sep = ""), plot = plot)
+}
+
+```
+
+********************************************************************************
+An example of the input
+********************************************************************************
+SLSQuantReg(G = "yengogrs", Y = "log_income", X = "BMI", C = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_no_zincome, Name = "SLS_log_Yengo_")
+********************************************************************************
+
+#Analysis
+
+##Yengo
+
+###Total
+```{r}
+SLSQuantReg(G = "yengogrs", Y = "log_income", X = "BMI", C = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_no_zincome, Name = "SLS_log_Yengo_NZI")
+```
+
+```{r}
+SLSQuantReg(G = "yengogrs", Y = "prob_income_positive", X = "BMI", C = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_no_na, Name = "SLS_Prob_Yengo")
+```
+
+###Male
+```{r}
+SLSQuantReg(G = "yengogrs", Y = "log_income", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_male_NZI, Name = "SLS_log_Yengo_NZI_male")
+```
+
+```{r}
+SLSQuantReg(G = "yengogrs", Y = "prob_income_positive", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_male, Name = "SLS_Prob_Yengo_male")
+```
+
+###Female
+```{r}
+SLSQuantReg(G = "yengogrs", Y = "log_income", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_female_NZI, Name = "SLS_log_Yengo_NZI_female")
+```
+```{r}
+SLSQuantReg(G = "yengogrs", Y = "prob_income_positive", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_female, Name = "SLS_Prob_Yengo_female")
+```
+##Locke
+
+###Total
+```{r}
+SLSQuantReg(G = "lockegrs", Y = "log_income", X = "BMI", C = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_no_zincome, Name = "SLS_log_Locke_NZI")
+```
+
+```{r}
+SLSQuantReg(G = "lockegrs", Y = "prob_income_positive", X = "BMI", C = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_no_na, Name = "SLS_Prob_Locke")
+```
+
+
+###Male
+```{r}
+SLSQuantReg(G = "lockegrs", Y = "log_income", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_male_NZI, Name = "SLS_log_Locke_NZI_male")
+```
+
+```{r}
+SLSQuantReg(G = "lockegrs", Y = "prob_income_positive", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_male, Name = "SLS_Prob_Locke_male")
+```
+
+###Female
+```{r}
+SLSQuantReg(G = "lockegrs", Y = "log_income", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_female_NZI, Name = "SLS_log_Locke_NZI_female")
+```
+
+```{r}
+SLSQuantReg(G = "lockegrs", Y = "prob_income_positive", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2", "D_HUNT3"), Data = df_regression_female, Name = "SLS_Prob_Locke_female")
+```
+
+
+#Data Christina
+Load the dataset
+```{r}
+df_Christina <- read_dta("2nd analysis/df_Christina.dta")
+```
+Take away the NA
+```{r}
+df_Christina_no_na <- na.omit(df_Christina[, c("BMI", "yengogrs", "Smoking", "Urbanity", "BirthYear", "Marital", "Bu_Edu", "Income_Eur","D_HUNT2", "D_HUNT3", "lockegrs", "Sex", "prob_income_positive")])
+
+df_Christina_no_na <- df_Christina_no_na[df_Christina_no_na$Income_Eur >= 0, ]
+```
+Make a group for Non Zero Income
+Exclude those with an income=0
+```{r}
+df_Christina_no_zincome <- df_Christina_no_na[df_Christina_no_na$Income_Eur != 0, ]
+```
+Take away missing values from the variables
+```{r}
+df_Christina_no_zincome <- na.omit(df_Christina_no_zincome[, c("BMI", "yengogrs", "Smoking", "Urbanity", "BirthYear", "Marital", "Bu_Edu", "Income_Eur","D_HUNT2", "D_HUNT3", "lockegrs", "Sex", "prob_income_positive")])
+```
+Create log variables for income in both
+```{r}
+df_Christina_no_na$log_income <- log1p(df_Christina_no_na$Income_Eur)
+df_Christina_no_zincome$log_income <- log(df_Christina_no_zincome$Income_Eur)
+df_Christina_no_zincome <- df_Christina_no_zincome[!is.nan(df_Christina_no_zincome$Income_Eur), ]
+```
+Generate one for males and females
+```{r}
+df_Christina_male <- subset(df_Christina_no_na, Sex == 2)
+df_Christina_female <- subset(df_Christina_no_na, Sex == 1)
+df_Christina_male_NZI <- subset(df_Christina_no_zincome, Sex == 2)
+df_Christina_female_NZI <- subset(df_Christina_no_zincome, Sex == 1)
+```
+
+#Analysis with Christina Data
+##Yengo
+
+###Total
+```{r}
+SLSQuantReg(G = "yengogrs", Y = "log_income", X = "BMI", C = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_Christina_no_zincome, Name = "SLS_log_Yengo_NZI_Chris")
+```
+
+```{r}
+SLSQuantReg(G = "yengogrs", Y = "prob_income_positive", X = "BMI", C = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_Christina_no_na, Name = "SLS_Prob_Yengo_Chris")
+```
+
+###Male
+```{r}
+SLSQuantReg(G = "yengogrs", Y = "log_income", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_Christina_male_NZI, Name = "SLS_log_Yengo_NZI_male_Chris")
+```
+
+```{r}
+SLSQuantReg(G = "yengogrs", Y = "prob_income_positive", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_Christina_male, Name = "SLS_Prob_Yengo_male_Chris")
+```
+
+###Female
+```{r}
+SLSQuantReg(G = "yengogrs", Y = "log_income", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_Christina_female_NZI, Name = "SLS_log_Yengo_NZI_female_Chris")
+```
+
+```{r}
+SLSQuantReg(G = "yengogrs", Y = "prob_income_positive", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_Christina_female, Name = "SLS_Prob_Yengo_female_Chris")
+```
+##Locke
+
+###Total
+```{r}
+SLSQuantReg(G = "lockegrs", Y = "log_income", X = "BMI", C = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_Christina_no_zincome, Name = "SLS_log_Locke_NZI_Chris")
+```
+
+```{r}
+SLSQuantReg(G = "lockegrs", Y = "prob_income_positive", X = "BMI", C = c("BirthYear", "Sex", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_Christina_no_na, Name = "SLS_Prob_Locke_Chris")
+```
+
+
+###Male
+```{r}
+SLSQuantReg(G = "lockegrs", Y = "log_income", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_Christina_male_NZI, Name = "SLS_log_Locke_NZI_male_Chris")
+```
+
+```{r}
+SLSQuantReg(G = "lockegrs", Y = "prob_income_positive", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_Christina_male, Name = "SLS_Prob_Locke_male_Chris")
+```
+
+###Female
+```{r}
+SLSQuantReg(G = "lockegrs", Y = "log_income", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_Christina_female_NZI, Name = "SLS_log_Locke_NZI_female_Chris")
+```
+
+```{r}
+SLSQuantReg(G = "lockegrs", Y = "prob_income_positive", X = "BMI", C = c("BirthYear", "Urbanity", "Smoking", "Marital", "Bu_Edu", "D_HUNT2"), Data = df_Christina_female, Name = "SLS_Prob_Locke_female_Chris")
+```
+
